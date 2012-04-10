@@ -422,6 +422,12 @@ static void handle_device_event(struct uevent *uevent)
             base = "/dev/log/";
             mkdir(base, 0755);
             name += 4;
+        } else if (!strncmp(uevent->subsystem, "emxx_dsp", 9)) {
+            base = "/dev/InterDSP/";
+            mkdir(base, 0755);
+        } else if (!strncmp(uevent->subsystem, "video4linux", 11)) {
+            base = "/dev/v4l/";
+            mkdir(base, 0755);
         } else
             base = "/dev/";
     }

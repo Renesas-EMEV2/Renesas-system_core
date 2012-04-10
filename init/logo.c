@@ -39,6 +39,17 @@ void android_memset16(void *_ptr, unsigned short val, unsigned count)
 }
 #endif
 
+static void android_memset24(void *_ptr, unsigned int val, unsigned count)
+{
+    unsigned char *ptr = _ptr;
+    count /= 3;
+    while(count--) {
+        *ptr++ = (val >> 0) & 0xff;
+        *ptr++ = (val >> 8) & 0xff;
+        *ptr++ = (val >> 16) & 0xff;
+    }
+}
+
 struct FB {
     unsigned short *bits;
     unsigned size;
@@ -49,7 +60,7 @@ struct FB {
 
 #define fb_width(fb) ((fb)->vi.xres)
 #define fb_height(fb) ((fb)->vi.yres)
-#define fb_size(fb) ((fb)->vi.xres * (fb)->vi.yres * 2)
+#define fb_size(fb) ((fb)->vi.xres * (fb)->vi.yres * ((fb)->vi.bits_per_pixel/8))
 
 static int fb_open(struct FB *fb)
 {
@@ -106,9 +117,12 @@ int load_565rle_image(char *fn)
 {
     struct FB fb;
     struct stat s;
-    unsigned short *data, *bits, *ptr;
+    unsigned short *data, *bits = NULL, *ptr;
     unsigned count, max;
     int fd;
+    unsigned int *bits32 = NULL, tmp;
+    unsigned char *bits8 = NULL;
+    unsigned char R, G, B;
 
     if (vt_set_mode(1)) 
         return -1;
@@ -133,13 +147,41 @@ int load_565rle_image(char *fn)
     max = fb_width(&fb) * fb_height(&fb);
     ptr = data;
     count = s.st_size;
-    bits = fb.bits;
+    if (fb.vi.bits_per_pixel == 32) {
+        bits32 = (unsigned int *)fb.bits;
+    } else if (fb.vi.bits_per_pixel == 24) {
+        bits8 = (unsigned char *)fb.bits;
+    } else {
+        bits = fb.bits;
+    }
     while (count > 3) {
         unsigned n = ptr[0];
         if (n > max)
             break;
-        android_memset16(bits, ptr[1], n << 1);
-        bits += n;
+        if (fb.vi.bits_per_pixel == 32) {
+            R = ((ptr[1] & 0xF800) >> 11) << 3;
+            G = ((ptr[1] & 0x07E0) >> 5 ) << 2;
+            B = ((ptr[1] & 0x001F) >> 0 ) << 3;
+            if (fb.vi.red.offset == 16)
+                tmp = 0xff000000 | (R << 16) | (G << 8) | B;
+            else
+                tmp = 0xff000000 | (B << 16) | (G << 8) | R;
+            android_memset32(bits32, tmp, n << 2);
+            bits32 += n;
+        } else if (fb.vi.bits_per_pixel == 24) {
+            R = ((ptr[1] & 0xF800) >> 11) << 3;
+            G = ((ptr[1] & 0x07E0) >> 5 ) << 2;
+            B = ((ptr[1] & 0x001F) >> 0 ) << 3;
+            if (fb.vi.red.offset == 16)
+                tmp = (R << 16) | (G << 8) | B;
+            else
+                tmp = (B << 16) | (G << 8) | R;
+            android_memset24(bits8, tmp, n * 3);
+            bits8 += (n * 3);
+        } else {
+            android_memset16(bits, ptr[1], n << 1);
+            bits += n;
+        }
         max -= n;
         ptr += 2;
         count -= 4;
@@ -149,7 +191,7 @@ int load_565rle_image(char *fn)
     fb_update(&fb);
     fb_close(&fb);
     close(fd);
-    unlink(fn);
+//    unlink(fn);
     return 0;
 
 fail_unmap_data:
